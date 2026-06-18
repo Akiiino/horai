@@ -1,0 +1,22 @@
+[build-system]
+requires = ["setuptools"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "eunomia"
+version = "0.1.0"
+description = "A routine-keeping personal assistant driven by a Telegram bot"
+requires-python = ">=3.11"
+dependencies = [
+    "python-telegram-bot>=20",
+    "APScheduler>=3",
+]
+
+[project.scripts]
+eunomia = "eunomia.__main__:main"
+
+[tool.setuptools.packages.find]
+include = ["eunomia*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

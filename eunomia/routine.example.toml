@@ -1,0 +1,33 @@
+# Eunomia routine — the ideal recurring day.
+# Edit this file; the daemon hot-reloads it. Each [[block]] is a time block.
+#
+#   days   : daily | weekdays | weekends | a comma list like "mon,wed,fri"
+#   steps  : optional checklist; without it a block just gets a Done/Skip ack
+#   anchor : reserved (true = fixed to wall-clock); automatic drift is not wired yet
+#   nag    : optional per-block override of { every_min, max }
+
+[[block]]
+name  = "Morning Routine"
+start = "07:30"
+end   = "07:50"
+days  = "daily"
+steps = ["wash face", "brush teeth", "shower"]
+
+[[block]]
+name  = "Breakfast"
+start = "07:50"
+end   = "08:20"
+days  = "daily"
+
+[[block]]
+name  = "Workout"
+start = "18:00"
+end   = "19:00"
+days  = "mon,wed,fri"
+nag   = { every_min = 10, max = 3 }
+
+[[block]]
+name  = "Lunch"
+start = "13:00"
+end   = "13:45"
+days  = "daily"
