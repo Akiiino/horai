@@ -20,3 +20,8 @@ include = ["eunomia*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+
+[tool.basedpyright]
+typeCheckingMode = "standard"  #TODO: bump to "strict" as the codebase gets annotated.
+include = ["eunomia", "tests"]
+extraPaths = ["."]  # resolve the local `eunomia` package for the test modules

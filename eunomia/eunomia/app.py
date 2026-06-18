@@ -205,13 +205,17 @@ class Eunomia:
         except Exception as exc:  # keep the last good routine on a bad edit
             log.error("could not load routine %s: %s", self.cfg.routine_path, exc)
 
-    def watch_routine(self) -> None:
+    # These two are scheduler callbacks. They must be async: APScheduler's
+    # AsyncIOExecutor runs plain functions in a worker thread, but the SQLite
+    # connection is bound to the loop thread (check_same_thread), so a sync job
+    # touching the store would raise. Coroutines run on the loop thread.
+    async def watch_routine(self) -> None:
         before = self.routine_mtime
         self.reload_routine()
         if self.routine_mtime != before:
             self.materialize_and_schedule(self.now().date())
 
-    def rollover(self) -> None:
+    async def rollover(self) -> None:
         """At the start of a new day: roll yesterday up and lay out today."""
         self.reload_routine()
         self.materialize_and_schedule(self.now().date())
