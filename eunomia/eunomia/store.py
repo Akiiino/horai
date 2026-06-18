@@ -27,6 +27,7 @@ CREATE TABLE IF NOT EXISTS instances (
     status          TEXT NOT NULL DEFAULT 'pending',
     responded_at    TEXT,
     nag_count       INTEGER NOT NULL DEFAULT 0,
+    message_id      INTEGER,
     UNIQUE (block_name, date)
 );
 CREATE TABLE IF NOT EXISTS step_state (
@@ -44,7 +45,15 @@ def connect(path: str) -> sqlite3.Connection:
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
     conn.executescript(_SCHEMA)
+    _migrate(conn)
     return conn
+
+
+def _migrate(conn: sqlite3.Connection) -> None:
+    """Bring an older on-disk DB up to the current schema."""
+    cols = {r["name"] for r in conn.execute("PRAGMA table_info(instances)")}
+    if "message_id" not in cols:
+        conn.execute("ALTER TABLE instances ADD COLUMN message_id INTEGER")
 
 
 def upsert_instance(
@@ -72,6 +81,15 @@ def upsert_instance(
 
 def get_instance(conn: sqlite3.Connection, iid: int) -> sqlite3.Row | None:
     return conn.execute("SELECT * FROM instances WHERE id = ?", (iid,)).fetchone()
+
+
+def set_message_id(
+    conn: sqlite3.Connection, iid: int, message_id: int | None
+) -> None:
+    """Remember (or forget) which chat message is this instance's live card."""
+    conn.execute(
+        "UPDATE instances SET message_id = ? WHERE id = ?", (message_id, iid)
+    )
 
 
 def find_instance(
@@ -150,10 +168,12 @@ def first_undone_step(conn: sqlite3.Connection, iid: int) -> str | None:
 
 
 def adherence(conn: sqlite3.Connection, since: dt.date) -> list[sqlite3.Row]:
-    """Per-block counts of done vs total since ``since`` (inclusive)."""
+    """Per-block done / skipped / missed / total since ``since`` (inclusive)."""
     return conn.execute(
         "SELECT block_name, "
         "  SUM(status = 'done') AS done, "
+        "  SUM(status = 'skipped') AS skipped, "
+        "  SUM(status = 'missed') AS missed, "
         "  COUNT(*) AS total "
         "FROM instances WHERE date >= ? "
         "GROUP BY block_name ORDER BY block_name",

@@ -21,6 +21,13 @@ def test_parse_days_rejects_garbage():
         template.parse_days("someday")
 
 
+def test_format_days_round_trips_keywords():
+    assert template.format_days(template.parse_days("daily")) == "daily"
+    assert template.format_days(template.parse_days("weekdays")) == "weekdays"
+    assert template.format_days(template.parse_days("weekends")) == "weekends"
+    assert template.format_days(template.parse_days("mon,wed,fri")) == "mon,wed,fri"
+
+
 def test_parse_block_defaults_and_nag():
     block = template.parse_block(
         {"name": "Study", "start": "18:00", "end": "19:00", "days": "mon,fri"}

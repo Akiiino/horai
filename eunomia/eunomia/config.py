@@ -3,7 +3,8 @@
 The bot token can come from (in order): TELEGRAM_BOT_TOKEN, a file named by
 EUNOMIA_TOKEN_FILE, or a systemd ``token`` credential ($CREDENTIALS_DIRECTORY).
 The chat id (TELEGRAM_CHAT_ID) is optional — if unset, the bot adopts the first
-chat that messages it. Neither is needed in dry-run mode.
+chat that messages it. Neither is needed in dry-run mode. EUNOMIA_WRAPUP (HH:MM,
+default 23:00; empty to disable) sets the nightly summary time.
 """
 
 from __future__ import annotations
@@ -30,6 +31,14 @@ def _read_token(env: Mapping[str, str]) -> str:
     return ""
 
 
+def _parse_hhmm(spec: str) -> dt.time | None:
+    spec = spec.strip()
+    if not spec:
+        return None
+    hour, _, minute = spec.partition(":")
+    return dt.time(int(hour), int(minute or 0))
+
+
 @dataclass(frozen=True)
 class Config:
     token: str
@@ -38,6 +47,7 @@ class Config:
     db_path: str
     tz: dt.tzinfo
     dry_run: bool
+    wrapup: dt.time | None  # nightly summary time; None disables
 
     @classmethod
     def from_env(cls, env: Mapping[str, str] = os.environ) -> "Config":
@@ -61,4 +71,5 @@ class Config:
             db_path=env.get("EUNOMIA_DB", "eunomia.db"),
             tz=tz,
             dry_run=dry_run,
+            wrapup=_parse_hhmm(env.get("EUNOMIA_WRAPUP", "23:00")),
         )

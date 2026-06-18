@@ -119,6 +119,25 @@ def test_mark_missed_before_only_past_pending(conn: sqlite3.Connection):
     assert row["status"] == store.PENDING
 
 
+def test_set_message_id_round_trip(conn: sqlite3.Connection):
+    iid, _ = store.upsert_instance(
+        conn,
+        _block(steps=()),
+        dt.date(2026, 6, 18),
+        dt.datetime(2026, 6, 18, 7, tzinfo=TZ),
+    )
+    row = store.get_instance(conn, iid)
+    assert row is not None and row["message_id"] is None
+
+    store.set_message_id(conn, iid, 4242)
+    row = store.get_instance(conn, iid)
+    assert row is not None and row["message_id"] == 4242
+
+    store.set_message_id(conn, iid, None)  # snooze/reset clears the live card
+    row = store.get_instance(conn, iid)
+    assert row is not None and row["message_id"] is None
+
+
 def test_adherence_counts(conn: sqlite3.Connection):
     block = _block(steps=())
     a, _ = store.upsert_instance(
@@ -133,3 +152,16 @@ def test_adherence_counts(conn: sqlite3.Connection):
     assert dict((r["block_name"], (r["done"], r["total"])) for r in rows) == {
         "Morning": (1, 2)
     }
+
+
+def test_adherence_breakdown(conn: sqlite3.Connection):
+    block = _block(steps=())
+    statuses = [store.DONE, store.DONE, store.SKIPPED, store.MISSED]
+    for i, status in enumerate(statuses):
+        day = dt.date(2026, 6, 14 + i)
+        iid, _ = store.upsert_instance(
+            conn, block, day, dt.datetime(2026, 6, 14 + i, 7, tzinfo=TZ)
+        )
+        store.set_status(conn, iid, status)
+    (row,) = store.adherence(conn, dt.date(2026, 6, 1))
+    assert (row["done"], row["skipped"], row["missed"], row["total"]) == (2, 1, 1, 4)

@@ -52,6 +52,20 @@ def parse_days(spec: Any) -> frozenset[int]:
     return frozenset(out)
 
 
+_DAY_NAMES = ("mon", "tue", "wed", "thu", "fri", "sat", "sun")
+
+
+def format_days(days: frozenset[int]) -> str:
+    """Human-readable inverse of :func:`parse_days`."""
+    if days == frozenset(range(7)):
+        return "daily"
+    if days == frozenset(range(5)):
+        return "weekdays"
+    if days == frozenset({5, 6}):
+        return "weekends"
+    return ",".join(_DAY_NAMES[d] for d in sorted(days))
+
+
 def parse_time(spec: Any) -> dt.time:
     hour, _, minute = str(spec).partition(":")
     return dt.time(int(hour), int(minute or 0))

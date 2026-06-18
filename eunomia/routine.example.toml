@@ -5,6 +5,9 @@
 #   steps  : optional checklist; without it a block just gets a Done/Skip ack
 #   anchor : reserved (true = fixed to wall-clock); automatic drift is not wired yet
 #   nag    : optional per-block override of { every_min, max }
+#
+# A nightly wrap-up summary is sent at EUNOMIA_WRAPUP (HH:MM, default 23:00;
+# set it empty to disable).
 
 [[block]]
 name  = "Morning Routine"
