@@ -15,6 +15,11 @@ dependencies = [
 [project.scripts]
 eunomia = "eunomia.__main__:main"
 
+[dependency-groups]
+# Test/dev tooling, declared once here and pulled into the Nix checks and
+# devShell via pyproject.nix's withPackages renderer.
+dev = ["pytest"]
+
 [tool.setuptools.packages.find]
 include = ["eunomia*"]
 
