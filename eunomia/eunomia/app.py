@@ -10,9 +10,14 @@ from __future__ import annotations
 import datetime as dt
 import logging
 import os
+import sqlite3
+from collections.abc import Callable
 from datetime import timedelta
+from typing import Any, Protocol, cast
 
-from apscheduler.schedulers.asyncio import AsyncIOScheduler
+from apscheduler.schedulers.asyncio import (  # pyright: ignore[reportMissingTypeStubs]
+    AsyncIOScheduler,
+)
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import (
     Application,
@@ -27,6 +32,21 @@ from . import store, template
 from .config import Config
 
 log = logging.getLogger("eunomia")
+
+
+# APScheduler ships no type information, so its API surface comes through as
+# ``Unknown`` under strict checking. These Protocols pin down exactly the slice
+# we use; the lone ``cast`` in ``Eunomia.__init__`` is the only untyped seam.
+class _Job(Protocol):
+    def remove(self) -> None: ...
+
+
+class _Scheduler(Protocol):
+    def start(self) -> None: ...
+    def add_job(
+        self, func: Callable[..., Any], trigger: str, **kwargs: Any
+    ) -> _Job: ...
+    def get_job(self, job_id: str) -> _Job | None: ...
 
 _STATUS_ICON = {
     store.PENDING: "•",
@@ -59,13 +79,16 @@ class Eunomia:
         self.conn = store.connect(config.db_path)
         self.blocks: list[template.Block] = []
         self.routine_mtime: float | None = None
-        self.scheduler = AsyncIOScheduler(timezone=config.tz)
-        self.app = (
-            Application.builder()
-            .token(config.token or "0:dry-run")
-            .post_init(self._on_start)
-            .build()
+        self.scheduler: _Scheduler = cast(
+            "_Scheduler", AsyncIOScheduler(timezone=config.tz)
         )
+        # PTB annotates ``post_init``'s callback param as a bare, unparameterized
+        # ``Application``, so its member type comes through as partially unknown.
+        builder = Application.builder().token(config.token or "0:dry-run")
+        builder = builder.post_init(  # pyright: ignore[reportUnknownMemberType]
+            self._on_start
+        )
+        self.app = builder.build()
         self._register_handlers()
 
     # ---- lifecycle ---------------------------------------------------------
@@ -86,7 +109,7 @@ class Eunomia:
 
         asyncio.run(main())
 
-    async def _on_start(self, _app) -> None:
+    async def _on_start(self, _app: object) -> None:
         self.reload_routine(force=True)
         self.scheduler.start()
         self.materialize_and_schedule(self.now().date())
@@ -148,12 +171,12 @@ class Eunomia:
             return
         await self.app.bot.send_message(self.chat_id, text, reply_markup=markup)
 
-    def _nudge_text(self, inst) -> str:
+    def _nudge_text(self, inst: sqlite3.Row) -> str:
         hhmm = dt.datetime.fromisoformat(inst["scheduled_start"]).strftime("%H:%M")
         return f"🔔 {hhmm} — {inst['block_name']}"
 
     def _keyboard(self, iid: int, block: template.Block | None) -> InlineKeyboardMarkup:
-        rows = []
+        rows: list[list[InlineKeyboardButton]] = []
         if block and block.steps:
             for s in store.steps(self.conn, iid):
                 mark = "✅" if s["done"] else "☐"
@@ -230,6 +253,7 @@ class Eunomia:
             start = template.start_at(block, date, self.cfg.tz)
             iid, _ = store.upsert_instance(self.conn, block, date, start)
             inst = store.get_instance(self.conn, iid)
+            assert inst is not None  # just upserted
             if inst["status"] != store.PENDING:
                 continue
             if self.scheduler.get_job(f"nudge:{iid}") or self.scheduler.get_job(
@@ -295,6 +319,7 @@ class Eunomia:
 
     async def on_button(self, update: Update, _ctx: ContextTypes.DEFAULT_TYPE) -> None:
         query = update.callback_query
+        assert query is not None and query.data is not None  # CallbackQueryHandler
         await query.answer()
         if not self._owner(update):
             return
@@ -332,6 +357,7 @@ class Eunomia:
     async def cmd_now(self, update: Update, _ctx: ContextTypes.DEFAULT_TYPE) -> None:
         if not self._owner(update):
             return
+        assert update.message is not None
         now = self.now()
         block = template.current_block(self.blocks, now)
         if block is None:
@@ -356,11 +382,12 @@ class Eunomia:
     async def cmd_today(self, update: Update, _ctx: ContextTypes.DEFAULT_TYPE) -> None:
         if not self._owner(update):
             return
+        assert update.message is not None
         rows = store.instances_on(self.conn, self.now().date())
         if not rows:
             await update.message.reply_text("Nothing scheduled today.")
             return
-        lines = []
+        lines: list[str] = []
         for r in rows:
             hhmm = dt.datetime.fromisoformat(r["scheduled_start"]).strftime("%H:%M")
             lines.append(
@@ -371,6 +398,7 @@ class Eunomia:
     async def cmd_stats(self, update: Update, _ctx: ContextTypes.DEFAULT_TYPE) -> None:
         if not self._owner(update):
             return
+        assert update.message is not None
         since = self.now().date() - timedelta(days=7)
         rows = store.adherence(self.conn, since)
         if not rows:
@@ -386,6 +414,7 @@ class Eunomia:
     async def cmd_help(self, update: Update, _ctx: ContextTypes.DEFAULT_TYPE) -> None:
         if not self._owner(update):
             return
+        assert update.message is not None
         await update.message.reply_text(
             "I keep your routine.\n"
             "/now — what should I be doing right now\n"

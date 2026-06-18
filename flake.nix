@@ -8,7 +8,11 @@
   };
 
   outputs =
-    { self, nixpkgs, pyproject-nix }:
+    {
+      self,
+      nixpkgs,
+      pyproject-nix,
+    }:
     let
       inherit (nixpkgs) lib;
 
@@ -92,7 +96,11 @@
             (pkgs.python3.withPackages (
               ps:
               lib.concatMap (
-                project: project.renderers.withPackages { python = pkgs.python3; groups = [ "dev" ]; } ps
+                project:
+                project.renderers.withPackages {
+                  python = pkgs.python3;
+                  groups = [ "dev" ];
+                } ps
               ) (lib.attrValues projects)
             ))
             pkgs.ruff

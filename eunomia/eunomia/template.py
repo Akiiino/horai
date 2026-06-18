@@ -11,6 +11,7 @@ import datetime as dt
 from pathlib import Path
 import tomllib
 from dataclasses import dataclass
+from typing import Any, cast
 
 _WEEKDAYS = {"mon": 0, "tue": 1, "wed": 2, "thu": 3, "fri": 4, "sat": 5, "sun": 6}
 
@@ -27,9 +28,10 @@ class Block:
     nag_max: int = 3
 
 
-def parse_days(spec) -> frozenset[int]:
+def parse_days(spec: Any) -> frozenset[int]:
+    items: list[Any]
     if isinstance(spec, list):
-        items = spec
+        items = cast("list[Any]", spec)
     else:
         s = str(spec).strip().lower()
         if s in ("daily", "every", "everyday", "all"):
@@ -39,7 +41,7 @@ def parse_days(spec) -> frozenset[int]:
         if s == "weekends":
             return frozenset({5, 6})
         items = [p for p in s.split(",") if p.strip()]
-    out = set()
+    out: set[int] = set()
     for item in items:
         key = str(item).strip().lower()[:3]
         if key not in _WEEKDAYS:
@@ -50,13 +52,13 @@ def parse_days(spec) -> frozenset[int]:
     return frozenset(out)
 
 
-def parse_time(spec) -> dt.time:
+def parse_time(spec: Any) -> dt.time:
     hour, _, minute = str(spec).partition(":")
     return dt.time(int(hour), int(minute or 0))
 
 
-def parse_block(raw: dict) -> Block:
-    nag = raw.get("nag") or {}
+def parse_block(raw: dict[str, Any]) -> Block:
+    nag: dict[str, Any] = raw.get("nag") or {}
     return Block(
         name=str(raw["name"]),
         start=parse_time(raw["start"]),
@@ -69,7 +71,7 @@ def parse_block(raw: dict) -> Block:
     )
 
 
-def parse_blocks(data: dict) -> list[Block]:
+def parse_blocks(data: dict[str, Any]) -> list[Block]:
     return [parse_block(b) for b in data.get("block", [])]
 
 

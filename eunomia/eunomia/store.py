@@ -39,7 +39,7 @@ CREATE TABLE IF NOT EXISTS step_state (
 """
 
 
-def connect(path) -> sqlite3.Connection:
+def connect(path: str) -> sqlite3.Connection:
     conn = sqlite3.connect(path, isolation_level=None)  # autocommit
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
@@ -90,7 +90,9 @@ def instances_on(conn: sqlite3.Connection, date: dt.date) -> list[sqlite3.Row]:
     ).fetchall()
 
 
-def set_status(conn: sqlite3.Connection, iid: int, status: str, *, now=None) -> None:
+def set_status(
+    conn: sqlite3.Connection, iid: int, status: str, *, now: dt.datetime | None = None
+) -> None:
     responded = now.isoformat() if (now is not None and status in TERMINAL) else None
     conn.execute(
         "UPDATE instances SET status = ?, responded_at = ? WHERE id = ?",
@@ -113,7 +115,9 @@ def bump_nag(conn: sqlite3.Connection, iid: int) -> int:
     ).fetchone()["nag_count"]
 
 
-def mark_missed_before(conn: sqlite3.Connection, date: dt.date, *, now=None) -> int:
+def mark_missed_before(
+    conn: sqlite3.Connection, date: dt.date, *, now: dt.datetime | None = None
+) -> int:
     """Any still-pending instance from a past day counts as missed."""
     cur = conn.execute(
         "UPDATE instances SET status = 'missed', responded_at = ? "

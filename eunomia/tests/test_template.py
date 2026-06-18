@@ -56,7 +56,9 @@ def _blocks():
 def test_current_block_picks_latest_overlap():
     blocks = _blocks()
     when = dt.datetime(2026, 6, 18, 13, 40)  # Thursday, inside Lunch and Overlap
-    assert template.current_block(blocks, when).name == "Overlap"
+    block = template.current_block(blocks, when)
+    assert block is not None
+    assert block.name == "Overlap"
 
 
 def test_current_block_none_when_idle():
@@ -66,7 +68,9 @@ def test_current_block_none_when_idle():
 
 def test_next_block():
     when = dt.datetime(2026, 6, 18, 10, 0)
-    assert template.next_block(_blocks(), when).name == "Lunch"
+    nxt = template.next_block(_blocks(), when)
+    assert nxt is not None
+    assert nxt.name == "Lunch"
 
 
 def test_active_on_respects_weekday():
