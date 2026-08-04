@@ -1,0 +1,33 @@
+BEGIN:VCALENDAR
+VERSION:2.0
+PRODID:-//eunomia//routine example//EN
+X-WR-CALNAME:routine
+COMMENT:Eunomia routine — the ideal recurring day. Put these VEVENTs in the
+ RustiCal calendar named by EUNOMIA_CALDAV_ROUTINE (default "routine") and edit
+ them from any calendar app. Recurrence is owned by the calendar: an occurrence
+ exists for Eunomia iff the calendar produces one. Checklist steps ride in the
+ DESCRIPTION as lines starting "- " or "* "; each becomes its own to-do, tagged
+ with the block name. A block without steps becomes a single to-do.
+BEGIN:VEVENT
+UID:morning-routine@eunomia.example
+SUMMARY:Morning Routine
+DTSTART;TZID=Europe/Madrid:20260101T073000
+DTEND;TZID=Europe/Madrid:20260101T075000
+RRULE:FREQ=DAILY
+DESCRIPTION:- brush teeth\n- shower
+END:VEVENT
+BEGIN:VEVENT
+UID:lunch@eunomia.example
+SUMMARY:Lunch
+DTSTART;TZID=Europe/Madrid:20260101T130000
+DTEND;TZID=Europe/Madrid:20260101T134500
+RRULE:FREQ=DAILY
+END:VEVENT
+BEGIN:VEVENT
+UID:workout@eunomia.example
+SUMMARY:Workout
+DTSTART;TZID=Europe/Madrid:20260105T180000
+DTEND;TZID=Europe/Madrid:20260105T190000
+RRULE:FREQ=WEEKLY;BYDAY=MO,WE,FR
+END:VEVENT
+END:VCALENDAR

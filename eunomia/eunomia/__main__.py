@@ -9,10 +9,9 @@ def main() -> None:
         level=logging.INFO,
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
     )
-    # httpx logs full request URLs (containing the bot token) at INFO,
-    # so we keep logs above INFO to prevent leaking
-    logging.getLogger("httpx").setLevel(logging.WARNING)
-    logging.getLogger("apscheduler").setLevel(logging.WARNING)
+    # caldav logs whole requests (URLs and bodies) below INFO,
+    # so we keep it above that to prevent leaking the password
+    logging.getLogger("caldav").setLevel(logging.WARNING)
 
     Eunomia(Config.from_env()).run()
 

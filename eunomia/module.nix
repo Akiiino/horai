@@ -10,7 +10,7 @@ let
 in
 {
   options.services.eunomia = {
-    enable = lib.mkEnableOption "Eunomia routine assistant";
+    enable = lib.mkEnableOption "Eunomia routine-to-do adapter";
 
     package = lib.mkOption {
       type = lib.types.package;
@@ -19,20 +19,69 @@ in
       description = "The Eunomia package to run.";
     };
 
-    stateDir = lib.mkOption {
+    caldavUrl = lib.mkOption {
       type = lib.types.str;
-      default = "/var/lib/eunomia";
-      description = "Directory holding the SQLite history and the routine file.";
+      example = "https://dav.example.org/";
+      description = "Base URL of the CalDAV server (RustiCal).";
     };
 
-    routineFile = lib.mkOption {
+    caldavUser = lib.mkOption {
       type = lib.types.str;
-      default = "${cfg.stateDir}/routine.toml";
-      defaultText = lib.literalExpression "\"\${stateDir}/routine.toml\"";
+      description = "CalDAV username (principal) Eunomia authenticates as.";
+    };
+
+    passwordFile = lib.mkOption {
+      type = lib.types.nullOr lib.types.path;
+      default = null;
+      example = "/run/agenix/horai-rustical";
       description = ''
-        Path to the routine.toml. A writable path (not the Nix store) so it can
-        be edited live; the daemon seeds a default if it is missing and
-        hot-reloads on change.
+        Path to a file containing the CalDAV app password. Exposed to the
+        service via systemd LoadCredential, so it works with DynamicUser and an
+        agenix secret with default (root-only) ownership.
+      '';
+    };
+
+    routineCalendar = lib.mkOption {
+      type = lib.types.str;
+      default = "Routine";
+      description = "Name of the CalDAV calendar holding the routine VEVENTs.";
+    };
+
+    todoCalendar = lib.mkOption {
+      type = lib.types.str;
+      default = "Eunomia";
+      description = "Name of the CalDAV task list the derived to-dos are kept in.";
+    };
+
+    windowAhead = lib.mkOption {
+      type = lib.types.str;
+      default = "48h";
+      description = "How long before a block starts its to-dos appear.";
+    };
+
+    windowBack = lib.mkOption {
+      type = lib.types.str;
+      default = "12h";
+      description = "How long after a block ends its to-dos are removed.";
+    };
+
+    stepStagger = lib.mkOption {
+      type = lib.types.str;
+      default = "1s";
+      description = ''
+        How far apart a block's steps are placed, so the client sorts them in
+        order and their notifications arrive in that order. Raise it if a client
+        rounds the steps together and scrambles them.
+      '';
+    };
+
+    poll = lib.mkOption {
+      type = lib.types.str;
+      default = "5m";
+      description = ''
+        Longest nap between checks for edits to the routine calendar. Window
+        edges are hit exactly regardless — this only bounds how stale a
+        just-edited routine can be.
       '';
     };
 
@@ -40,54 +89,38 @@ in
       type = lib.types.nullOr lib.types.str;
       default = config.time.timeZone or null;
       defaultText = lib.literalExpression "config.time.timeZone";
-      description = "IANA timezone for block times. Null = system local time.";
-    };
-
-    tokenFile = lib.mkOption {
-      type = lib.types.nullOr lib.types.path;
-      default = null;
-      example = "/run/agenix/eunomia";
-      description = ''
-        Path to a file containing the bare Telegram bot token. Exposed to the
-        service via systemd LoadCredential, so it works with DynamicUser and an
-        agenix secret with default (root-only) ownership.
-      '';
-    };
-
-    chatId = lib.mkOption {
-      type = lib.types.nullOr lib.types.int;
-      default = null;
-      example = 123456789;
-      description = ''
-        Telegram chat id to send nudges to. Not a secret. If null, the bot
-        adopts the first chat that messages it (message it once to bind).
-      '';
+      description = "IANA timezone for floating event times. Null = system local time.";
     };
   };
 
   config = lib.mkIf cfg.enable {
     systemd.services.eunomia = {
-      description = "Eunomia routine assistant";
+      description = "Eunomia routine-to-do adapter";
       wantedBy = [ "multi-user.target" ];
       after = [ "network-online.target" ];
       wants = [ "network-online.target" ];
 
       environment = {
-        EUNOMIA_DB = "${cfg.stateDir}/eunomia.db";
-        EUNOMIA_ROUTINE = cfg.routineFile;
+        EUNOMIA_CALDAV_URL = cfg.caldavUrl;
+        EUNOMIA_CALDAV_USER = cfg.caldavUser;
+        EUNOMIA_CALDAV_ROUTINE = cfg.routineCalendar;
+        EUNOMIA_CALDAV_TODOS = cfg.todoCalendar;
+        EUNOMIA_WINDOW_AHEAD = cfg.windowAhead;
+        EUNOMIA_WINDOW_BACK = cfg.windowBack;
+        EUNOMIA_STEP_STAGGER = cfg.stepStagger;
+        EUNOMIA_POLL = cfg.poll;
       }
-      // lib.optionalAttrs (cfg.timezone != null) { EUNOMIA_TZ = cfg.timezone; }
-      // lib.optionalAttrs (cfg.chatId != null) { TELEGRAM_CHAT_ID = toString cfg.chatId; };
+      // lib.optionalAttrs (cfg.timezone != null) { EUNOMIA_TZ = cfg.timezone; };
 
       serviceConfig = {
         ExecStart = lib.getExe cfg.package;
-        LoadCredential = lib.mkIf (cfg.tokenFile != null) [ "token:${cfg.tokenFile}" ];
+        LoadCredential = lib.mkIf (cfg.passwordFile != null) [ "caldav-password:${cfg.passwordFile}" ];
         Restart = "on-failure";
         RestartSec = 5;
 
+        # No StateDirectory and no WorkingDirectory: the adapter keeps nothing
+        # between passes, and the calendar server owns every byte it touches.
         DynamicUser = true;
-        StateDirectory = "eunomia";
-        WorkingDirectory = cfg.stateDir;
 
         # hardening
         ProtectSystem = "strict";

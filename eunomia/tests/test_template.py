@@ -1,88 +1,112 @@
 import datetime as dt
-
-import pytest
+from zoneinfo import ZoneInfo
 
 from eunomia import template
 
+TZ = ZoneInfo("Europe/Madrid")
 
-def test_parse_days_keywords():
-    assert template.parse_days("daily") == frozenset(range(7))
-    assert template.parse_days("weekdays") == frozenset(range(5))
-    assert template.parse_days("weekends") == frozenset({5, 6})
+MORNING = """BEGIN:VEVENT
+UID:morning@test
+SUMMARY:Morning Routine
+DTSTART;TZID=Europe/Madrid:20260101T073000
+DTEND;TZID=Europe/Madrid:20260101T075000
+RRULE:FREQ=DAILY
+DESCRIPTION:- wash face\\n- brush teeth\\nnot a step
+END:VEVENT
+"""
+
+# 23:30 to 00:15 the next day — a window a time-of-day could not express.
+WIND_DOWN = """BEGIN:VEVENT
+UID:winddown@test
+SUMMARY:Wind Down
+DTSTART;TZID=Europe/Madrid:20260101T233000
+DTEND;TZID=Europe/Madrid:20260102T001500
+RRULE:FREQ=DAILY
+END:VEVENT
+"""
+
+SKIPPED = """BEGIN:VEVENT
+UID:lunch@test
+SUMMARY:Lunch
+DTSTART;TZID=Europe/Madrid:20260101T130000
+DTEND;TZID=Europe/Madrid:20260101T134500
+RRULE:FREQ=DAILY
+EXDATE;TZID=Europe/Madrid:20260106T130000
+END:VEVENT
+"""
+
+ALL_DAY = """BEGIN:VEVENT
+UID:holiday@test
+SUMMARY:Holiday
+DTSTART;VALUE=DATE:20260105
+DTEND;VALUE=DATE:20260106
+END:VEVENT
+"""
 
 
-def test_parse_days_list_and_csv():
-    assert template.parse_days("mon,wed,fri") == frozenset({0, 2, 4})
-    assert template.parse_days(["Mon", "Tuesday"]) == frozenset({0, 1})
+def _cal(*events: str) -> str:
+    body = "".join(events)
+    return f"BEGIN:VCALENDAR\nVERSION:2.0\nPRODID:-//test//EN\n{body}END:VCALENDAR\n"
 
 
-def test_parse_days_rejects_garbage():
-    with pytest.raises(ValueError):
-        template.parse_days("someday")
+def _at(
+    year: int, month: int, day: int, hour: int = 0, minute: int = 0
+) -> dt.datetime:
+    return dt.datetime(year, month, day, hour, minute, tzinfo=TZ)
 
 
-def test_format_days_round_trips_keywords():
-    assert template.format_days(template.parse_days("daily")) == "daily"
-    assert template.format_days(template.parse_days("weekdays")) == "weekdays"
-    assert template.format_days(template.parse_days("weekends")) == "weekends"
-    assert template.format_days(template.parse_days("mon,wed,fri")) == "mon,wed,fri"
+def test_parse_description_takes_only_step_lines():
+    assert template.parse_description("- one\n* two\nprose\n") == ("one", "two")
+    assert template.parse_description("") == ()
 
 
-def test_parse_block_defaults_and_nag():
-    block = template.parse_block(
-        {"name": "Study", "start": "18:00", "end": "19:00", "days": "mon,fri"}
+def test_expand_window_returns_absolute_datetimes():
+    found = template.expand_window(_cal(MORNING), _at(2026, 1, 5), _at(2026, 1, 6), TZ)
+    assert len(found) == 1
+    occurrence = found[0]
+    assert occurrence.name == "Morning Routine"
+    assert occurrence.source_uid == "morning@test"
+    assert occurrence.start == _at(2026, 1, 5, 7, 30)
+    assert occurrence.end == _at(2026, 1, 5, 7, 50)
+    assert occurrence.steps == ("wash face", "brush teeth")
+
+
+def test_expand_window_spanning_midnight():
+    found = template.expand_window(
+        _cal(WIND_DOWN), _at(2026, 1, 5, 23, 45), _at(2026, 1, 6, 0, 5), TZ
     )
-    assert block.start == dt.time(18, 0)
-    assert block.steps == ()
-    assert block.anchor is True
-    assert (block.nag_every_min, block.nag_max) == (10, 3)
+    assert len(found) == 1
+    assert found[0].start == _at(2026, 1, 5, 23, 30)
+    assert found[0].end == _at(2026, 1, 6, 0, 15)
 
-    custom = template.parse_block(
-        {
-            "name": "X",
-            "start": "9:5",
-            "end": "10:00",
-            "nag": {"every_min": 5, "max": 1},
-        }
+
+def test_expand_window_honours_exdate():
+    found = template.expand_window(_cal(SKIPPED), _at(2026, 1, 5), _at(2026, 1, 8), TZ)
+    assert [o.start.date() for o in found] == [dt.date(2026, 1, 5), dt.date(2026, 1, 7)]
+
+
+def test_expand_window_skips_all_day_events():
+    found = template.expand_window(_cal(ALL_DAY), _at(2026, 1, 5), _at(2026, 1, 6), TZ)
+    assert found == []
+
+
+def test_expand_window_sorts_by_start_and_includes_overlaps():
+    found = template.expand_window(
+        _cal(MORNING, SKIPPED, WIND_DOWN), _at(2026, 1, 5), _at(2026, 1, 6), TZ
     )
-    assert custom.start == dt.time(9, 5)
-    assert (custom.nag_every_min, custom.nag_max) == (5, 1)
+    # the first Wind Down began the evening before and runs into the window
+    assert [(o.name, o.start) for o in found] == [
+        ("Wind Down", _at(2026, 1, 4, 23, 30)),
+        ("Morning Routine", _at(2026, 1, 5, 7, 30)),
+        ("Lunch", _at(2026, 1, 5, 13, 0)),
+        ("Wind Down", _at(2026, 1, 5, 23, 30)),
+    ]
 
 
-def _blocks():
-    raw = {
-        "block": [
-            {"name": "Morning", "start": "07:00", "end": "08:00", "days": "daily"},
-            {"name": "Lunch", "start": "13:00", "end": "14:00", "days": "daily"},
-            {"name": "Overlap", "start": "13:30", "end": "14:00", "days": "daily"},
-        ]
-    }
-    return template.parse_blocks(raw)
+def test_recurrence_id_distinguishes_instances():
+    found = template.expand_window(_cal(MORNING), _at(2026, 1, 5), _at(2026, 1, 7), TZ)
+    assert len({o.recurrence_id for o in found}) == 2
 
 
-def test_current_block_picks_latest_overlap():
-    blocks = _blocks()
-    when = dt.datetime(2026, 6, 18, 13, 40)  # Thursday, inside Lunch and Overlap
-    block = template.current_block(blocks, when)
-    assert block is not None
-    assert block.name == "Overlap"
-
-
-def test_current_block_none_when_idle():
-    when = dt.datetime(2026, 6, 18, 10, 0)
-    assert template.current_block(_blocks(), when) is None
-
-
-def test_next_block():
-    when = dt.datetime(2026, 6, 18, 10, 0)
-    nxt = template.next_block(_blocks(), when)
-    assert nxt is not None
-    assert nxt.name == "Lunch"
-
-
-def test_active_on_respects_weekday():
-    block = template.parse_block(
-        {"name": "Wkday", "start": "09:00", "end": "10:00", "days": "weekdays"}
-    )
-    assert template.active_on(block, dt.date(2026, 6, 18))  # Thursday
-    assert not template.active_on(block, dt.date(2026, 6, 20))  # Saturday
+def test_expand_window_on_empty_calendar():
+    assert template.expand_window("", _at(2026, 1, 5), _at(2026, 1, 6), TZ) == []

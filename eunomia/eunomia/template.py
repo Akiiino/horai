@@ -1,125 +1,91 @@
-"""The schedule template: parse routine.toml into Blocks and answer time queries.
+"""The routine source: expand a CalDAV routine calendar into dated Occurrences.
 
-Everything here is pure (no I/O beyond reading the given file, no clock, no
-network) so it can be unit-tested directly. A future read-only calendar source
-only needs to produce a list[Block] to slot in.
+The routine lives in a RustiCal calendar as VEVENTs. Recurrence is owned by the
+calendar and expanded faithfully by ``recurring_ical_events`` (single events fire
+once; RRULE ``INTERVAL``/``COUNT``/``UNTIL`` and ``RDATE``/``EXDATE`` are honored,
+including several occurrences in one day) — so an Occurrence exists for a moment
+iff the calendar produces one there.
+
+An ``Occurrence`` is one resolved instance, carrying *absolute* datetimes: a
+window can span midnight, which a time-of-day cannot express. ``expand_window``
+is pure (ical text in, list out), so it unit-tests without a server. Steps ride
+in the event DESCRIPTION as lines starting ``- `` or ``* ``.
 """
 
 from __future__ import annotations
 
 import datetime as dt
-from pathlib import Path
-import tomllib
 from dataclasses import dataclass
-from typing import Any, cast
 
-_WEEKDAYS = {"mon": 0, "tue": 1, "wed": 2, "thu": 3, "fri": 4, "sat": 5, "sun": 6}
+import icalendar
+import recurring_ical_events  # pyright: ignore[reportMissingTypeStubs]
 
 
 @dataclass(frozen=True)
-class Block:
+class Occurrence:
+    """One resolved, dated instance of a routine block."""
+
+    source_uid: str  # UID of the VEVENT this came from
+    recurrence_id: str  # which instance of that VEVENT, as a UTC timestamp
     name: str
-    start: dt.time
-    end: dt.time
-    days: frozenset[int]  # weekday ints, Monday=0
+    start: dt.datetime
+    end: dt.datetime
     steps: tuple[str, ...] = ()
-    anchor: bool = True
-    nag_every_min: int = 10
-    nag_max: int = 3
 
 
-def parse_days(spec: Any) -> frozenset[int]:
-    items: list[Any]
-    if isinstance(spec, list):
-        items = cast("list[Any]", spec)
+def parse_description(text: str) -> tuple[str, ...]:
+    """The checklist steps in an event DESCRIPTION.
+
+    Lines beginning ``- `` or ``* `` are steps; anything else is ignored, so the
+    description stays human-editable in any calendar app.
+    """
+    steps: list[str] = []
+    for raw in text.splitlines():
+        line = raw.strip()
+        if line[:2] in ("- ", "* "):
+            steps.append(line[2:].strip())
+    return tuple(steps)
+
+
+def _aware(value: dt.datetime, tz: dt.tzinfo) -> dt.datetime:
+    """``value`` in ``tz``; a floating (naive) time is read as local to it."""
+    return value.replace(tzinfo=tz) if value.tzinfo is None else value.astimezone(tz)
+
+
+def _occurrence(comp: icalendar.Component, tz: dt.tzinfo) -> Occurrence | None:
+    start_field = comp.get("dtstart")
+    if start_field is None or not isinstance(start_field.dt, dt.datetime):
+        return None  # all-day / malformed events aren't timed routine blocks
+    start = _aware(start_field.dt, tz)
+
+    end_field = comp.get("dtend")
+    if end_field is not None and isinstance(end_field.dt, dt.datetime):
+        end = _aware(end_field.dt, tz)
     else:
-        s = str(spec).strip().lower()
-        if s in ("daily", "every", "everyday", "all"):
-            return frozenset(range(7))
-        if s == "weekdays":
-            return frozenset(range(5))
-        if s == "weekends":
-            return frozenset({5, 6})
-        items = [p for p in s.split(",") if p.strip()]
-    out: set[int] = set()
-    for item in items:
-        key = str(item).strip().lower()[:3]
-        if key not in _WEEKDAYS:
-            raise ValueError(f"unknown day: {item!r}")
-        out.add(_WEEKDAYS[key])
-    if not out:
-        raise ValueError("a block must be active on at least one day")
-    return frozenset(out)
+        duration = comp.get("duration")
+        end = start + duration.dt if duration is not None else start
 
+    rid_field = comp.get("recurrence-id")
+    rid = rid_field.dt if rid_field is not None else None
+    instance = _aware(rid, tz) if isinstance(rid, dt.datetime) else start
 
-_DAY_NAMES = ("mon", "tue", "wed", "thu", "fri", "sat", "sun")
-
-
-def format_days(days: frozenset[int]) -> str:
-    """Human-readable inverse of :func:`parse_days`."""
-    if days == frozenset(range(7)):
-        return "daily"
-    if days == frozenset(range(5)):
-        return "weekdays"
-    if days == frozenset({5, 6}):
-        return "weekends"
-    return ",".join(_DAY_NAMES[d] for d in sorted(days))
-
-
-def parse_time(spec: Any) -> dt.time:
-    hour, _, minute = str(spec).partition(":")
-    return dt.time(int(hour), int(minute or 0))
-
-
-def parse_block(raw: dict[str, Any]) -> Block:
-    nag: dict[str, Any] = raw.get("nag") or {}
-    return Block(
-        name=str(raw["name"]),
-        start=parse_time(raw["start"]),
-        end=parse_time(raw["end"]),
-        days=parse_days(raw.get("days", "daily")),
-        steps=tuple(str(s) for s in raw.get("steps", [])),
-        anchor=bool(raw.get("anchor", True)),
-        nag_every_min=int(nag.get("every_min", 10)),
-        nag_max=int(nag.get("max", 3)),
+    return Occurrence(
+        source_uid=str(comp.get("uid") or ""),
+        recurrence_id=instance.astimezone(dt.timezone.utc).isoformat(),
+        name=str(comp.get("summary") or "(untitled)"),
+        start=start,
+        end=end,
+        steps=parse_description(str(comp.get("description") or "")),
     )
 
 
-def parse_blocks(data: dict[str, Any]) -> list[Block]:
-    return [parse_block(b) for b in data.get("block", [])]
-
-
-def load_blocks(path: str | Path) -> list[Block]:
-    with open(path, "rb") as f:
-        return parse_blocks(tomllib.load(f))
-
-
-def active_on(block: Block, date: dt.date) -> bool:
-    return date.weekday() in block.days
-
-
-def start_at(block: Block, date: dt.date, tz: dt.tzinfo) -> dt.datetime:
-    return dt.datetime.combine(date, block.start, tzinfo=tz)
-
-
-def end_at(block: Block, date: dt.date, tz: dt.tzinfo) -> dt.datetime:
-    return dt.datetime.combine(date, block.end, tzinfo=tz)
-
-
-def current_block(blocks: list[Block], when: dt.datetime) -> Block | None:
-    """The block whose [start, end) contains ``when`` today.
-
-    If several overlap, the one that started most recently wins.
-    """
-    here = [
-        b
-        for b in blocks
-        if active_on(b, when.date()) and b.start <= when.time() < b.end
-    ]
-    return max(here, key=lambda b: b.start, default=None)
-
-
-def next_block(blocks: list[Block], when: dt.datetime) -> Block | None:
-    """The next block to start later today."""
-    later = [b for b in blocks if active_on(b, when.date()) and b.start > when.time()]
-    return min(later, key=lambda b: b.start, default=None)
+def expand_window(
+    calendar_ical: str, start: dt.datetime, end: dt.datetime, tz: dt.tzinfo
+) -> list[Occurrence]:
+    """Every routine occurrence overlapping ``[start, end)``, in starting order."""
+    if not calendar_ical.strip():
+        return []
+    cal = icalendar.Calendar.from_ical(calendar_ical)
+    expanded = recurring_ical_events.of(cal).between(start, end)
+    occurrences = [o for c in expanded if (o := _occurrence(c, tz))]
+    return sorted(occurrences, key=lambda o: (o.start, o.name, o.source_uid))
