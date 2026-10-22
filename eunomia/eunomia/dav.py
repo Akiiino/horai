@@ -21,7 +21,7 @@ from caldav.elements.base import ValuedBaseElement
 from caldav.elements.dav import SyncToken
 from caldav.lib import error as dav_error
 from caldav.lib.namespace import ns
-from caldav.objects import Calendar, Principal
+from caldav import Calendar, Principal
 
 from .config import Config
 from .todo import is_ours
